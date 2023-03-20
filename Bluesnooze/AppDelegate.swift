@@ -10,6 +10,8 @@ import Cocoa
 import IOBluetooth
 import LaunchAtLogin
 
+let statusChecksInterval: TimeInterval = 3
+
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -17,12 +19,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @IBOutlet weak var launchAtLoginMenuItem: NSMenuItem!
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private var statusChecksTimer: Timer?
+    private var preferedState = true
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         initStatusItem()
         setLaunchAtLoginState()
         setupNotificationHandlers()
-        setBluetooth(powerOn: true)
+        setBluetooth(powerOn: preferedState)
+        checkIfIsInClamshellMode()
     }
 
     // MARK: Click handlers
@@ -61,7 +66,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setBluetooth(powerOn: true)
     }
 
+    private func checkIfIsInClamshellMode() {
+        statusChecksTimer = Timer.scheduledTimer(
+            withTimeInterval: statusChecksInterval,
+            repeats: true,
+            block: { [weak self] _ in
+                guard let self = self else { return }
+
+                let isNotInClamshellMode = !self.isInClamshellMode()
+                if self.preferedState != isNotInClamshellMode {
+                    self.setBluetooth(powerOn: isNotInClamshellMode)
+                }
+            })
+    }
+
     private func setBluetooth(powerOn: Bool) {
+        preferedState = powerOn
         IOBluetoothPreferenceSetControllerPowerState(powerOn ? 1 : 0)
     }
 
@@ -84,5 +104,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setLaunchAtLoginState() {
         let state = LaunchAtLogin.isEnabled ? NSControl.StateValue.on : NSControl.StateValue.off
         launchAtLoginMenuItem.state = state
+    }
+
+    func isInClamshellMode() -> Bool {
+        let pipe = Pipe()
+        let process = Process()
+        process.launchPath = "/bin/sh"
+        process.arguments = ["-c", "ioreg -r -k AppleClamshellState -d 4 | grep AppleClamshellState  | head -1"]
+        process.standardOutput = pipe
+        let fileHandle = pipe.fileHandleForReading
+        process.launch()
+
+        return String(data: fileHandle.readDataToEndOfFile(), encoding: .utf8)?.contains("Yes") == true
     }
 }
